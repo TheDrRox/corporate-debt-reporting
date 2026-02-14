@@ -102,18 +102,30 @@ function parseBSEDate(d) {
 }
 
 // Get the appropriate date based on current time
+// Returns the last working day (Mon-Fri)
 function getTargetDate() {
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
   const istTime = new Date(now.getTime() + istOffset);
   const hour = istTime.getUTCHours();
+  const dayOfWeek = istTime.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
 
-  let targetDate;
+  let targetDate = new Date(istTime);
+
+  // If before 3 PM IST, use previous day's data
   if (hour < 15) {
-    targetDate = new Date(istTime);
     targetDate.setDate(targetDate.getDate() - 1);
-  } else {
-    targetDate = istTime;
+  }
+
+  // Now ensure we have a working day (Mon-Fri)
+  const targetDay = targetDate.getUTCDay();
+  
+  if (targetDay === 0) {
+    // Sunday -> go back to Friday
+    targetDate.setDate(targetDate.getDate() - 2);
+  } else if (targetDay === 6) {
+    // Saturday -> go back to Friday
+    targetDate.setDate(targetDate.getDate() - 1);
   }
 
   return targetDate;
@@ -436,12 +448,32 @@ async function cleanupOldData() {
 
   if (error) {
     console.error("Failed to cleanup old data:", error);
-    return 0;
+    return { count: 0, details: null };
   }
 
   const deletedCount = data?.length || 0;
+  
+  // Get breakdown by exchange and date range
+  let details = null;
+  if (deletedCount > 0 && data) {
+    const byExchange = data.reduce((acc, row) => {
+      acc[row.exchange] = (acc[row.exchange] || 0) + 1;
+      return acc;
+    }, {});
+    
+    const dates = data.map(row => row.trade_date).sort();
+    const oldestDate = dates[0];
+    const newestDate = dates[dates.length - 1];
+    
+    details = {
+      byExchange,
+      dateRange: { oldest: oldestDate, newest: newestDate },
+      cutoffDate: cutoffDateStr,
+    };
+  }
+  
   console.log(`✓ Cleaned up ${deletedCount} old records`);
-  return deletedCount;
+  return { count: deletedCount, details };
 }
 
 // Main execution
@@ -459,7 +491,7 @@ async function main() {
   const results = {
     nse: { success: false, count: 0, error: null },
     bse: { success: false, count: 0, error: null },
-    cleanup: { count: 0 },
+    cleanup: { count: 0, details: null },
   };
 
   // Fetch and store NSE data
@@ -490,8 +522,9 @@ async function main() {
 
   // Cleanup old data
   try {
-    const deletedCount = await cleanupOldData();
-    results.cleanup.count = deletedCount;
+    const cleanupResult = await cleanupOldData();
+    results.cleanup.count = cleanupResult.count;
+    results.cleanup.details = cleanupResult.details;
   } catch (error) {
     console.error("Cleanup failed:", error.message);
   }
@@ -519,8 +552,21 @@ async function main() {
   }
 
   if (results.cleanup.count > 0) {
-    console.log(`✓ Cleanup: Removed ${results.cleanup.count} old records`);
-    telegramMsg += `\n🧹 Cleaned up ${results.cleanup.count} old records\n`;
+    const { count, details } = results.cleanup;
+    console.log(`✓ Cleanup: Removed ${count} old records`);
+    
+    telegramMsg += `\n🧹 <b>Cleanup: Deleted ${count} old records</b>\n`;
+    if (details) {
+      telegramMsg += `📅 Date range: ${details.dateRange.oldest} to ${details.dateRange.newest}\n`;
+      telegramMsg += `🗓️ Cutoff: ${details.cutoffDate}\n`;
+      
+      if (details.byExchange.NSE) {
+        telegramMsg += `  • NSE: ${details.byExchange.NSE} records\n`;
+      }
+      if (details.byExchange.BSE) {
+        telegramMsg += `  • BSE: ${details.byExchange.BSE} records\n`;
+      }
+    }
   }
 
   // Handle errors

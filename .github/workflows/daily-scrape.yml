@@ -2,8 +2,8 @@ name: Daily Bond Data Scrape
 
 on:
   schedule:
-    # Run at 4:15 PM IST (10:45 AM UTC) Monday through Friday
-    - cron: '45 10 * * 1-5'
+    # Run at 6:00 PM IST (12:30 PM UTC) Monday through Friday
+    - cron: '30 12 * * 1-5'
   workflow_dispatch: # Allow manual trigger
 
 jobs:
