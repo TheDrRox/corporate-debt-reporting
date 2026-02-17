@@ -169,6 +169,27 @@ function parseCSV(csvString, exchange) {
   return records.map((r) => ({ ...r, exchange }));
 }
 
+// Extract form fields from HTML
+function extractFormFields(html) {
+  const root = parse(html);
+  return {
+    viewstate: root.querySelector("#__VIEWSTATE")?.getAttribute("value") || "",
+    viewstateGenerator:
+      root.querySelector("#__VIEWSTATEGENERATOR")?.getAttribute("value") || "",
+    eventValidation:
+      root.querySelector("#__EVENTVALIDATION")?.getAttribute("value") || "",
+  };
+}
+
+// Extract cookies from response headers
+function extractCookies(response) {
+  return (
+    response.headers["set-cookie"]
+      ?.map((cookie) => cookie.split(";")[0])
+      .join("; ") || ""
+  );
+}
+
 // Fetch NSE bond data
 async function fetchNSEData(targetDate) {
   console.log("Fetching NSE bond data...");
@@ -219,44 +240,44 @@ async function fetchBSEData(targetDate) {
   };
 
   try {
+    // Step 1: GET the page to obtain viewstate and cookies
     const initialResponse = await makeRequest(initialOptions);
 
-    const cookies =
-      initialResponse.headers["set-cookie"]
-        ?.map((cookie) => cookie.split(";")[0])
-        .join("; ") || "";
+    if (initialResponse.statusCode !== 200) {
+      throw new Error(`GET returned status ${initialResponse.statusCode}`);
+    }
 
-    const root = parse(initialResponse.body);
-    const viewstate =
-      root.querySelector("#__VIEWSTATE")?.getAttribute("value") || "";
-    const viewstateGenerator =
-      root.querySelector("#__VIEWSTATEGENERATOR")?.getAttribute("value") || "";
-    const eventValidation =
-      root.querySelector("#__EVENTVALIDATION")?.getAttribute("value") || "";
+    const cookies = extractCookies(initialResponse);
+    const fields1 = extractFormFields(initialResponse.body);
 
-    if (!viewstate || !viewstateGenerator || !eventValidation) {
+    if (
+      !fields1.viewstate ||
+      !fields1.viewstateGenerator ||
+      !fields1.eventValidation
+    ) {
       throw new Error("Failed to extract viewstate parameters");
     }
 
     console.log("✓ Got viewstate parameters");
 
+    // Step 2: Submit search to load results (needed for download viewstate)
     console.log("Submitting BSE form...");
     const dateStr = formatDateBSE(targetDate);
 
-    const postData = new URLSearchParams({
-      __VIEWSTATE: viewstate,
-      __VIEWSTATEGENERATOR: viewstateGenerator,
+    const submitData = new URLSearchParams({
+      __VIEWSTATE: fields1.viewstate,
+      __VIEWSTATEGENERATOR: fields1.viewstateGenerator,
       __VIEWSTATEENCRYPTED: "",
-      __EVENTVALIDATION: eventValidation,
+      __EVENTVALIDATION: fields1.eventValidation,
       ctl00$ContentPlaceHolder1$hidFDate: "",
       ctl00$ContentPlaceHolder1$txtFromDate: dateStr,
       ctl00$ContentPlaceHolder1$txtTodate: dateStr,
       ctl00$ContentPlaceHolder1$btnSubmit: "Submit",
       ctl00$ContentPlaceHolder1$hidCurrentDate: "",
-      ctl00$ContentPlaceHolder1$Indices: "rbcorpbonds3",
+      ctl00$ContentPlaceHolder1$Indices: "rcds",
     }).toString();
 
-    const postOptions = {
+    const submitOptions = {
       hostname: "www.bseindia.com",
       path: "/markets/debt/debt_search.aspx",
       method: "POST",
@@ -265,7 +286,7 @@ async function fetchBSEData(targetDate) {
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "accept-language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
         "content-type": "application/x-www-form-urlencoded",
-        "content-length": Buffer.byteLength(postData),
+        "content-length": Buffer.byteLength(submitData),
         cookie: cookies,
         origin: "https://www.bseindia.com",
         referer: "https://www.bseindia.com/markets/debt/debt_search.aspx",
@@ -274,73 +295,91 @@ async function fetchBSEData(targetDate) {
       },
     };
 
-    const postResponse = await makeRequest(postOptions, postData);
+    const submitResponse = await makeRequest(submitOptions, submitData);
 
-    if (postResponse.statusCode !== 200) {
+    if (submitResponse.statusCode !== 200) {
       throw new Error(
-        `BSE POST request returned status code: ${postResponse.statusCode}`,
+        `BSE submit POST returned status code: ${submitResponse.statusCode}`,
       );
     }
 
-    console.log("✓ Got BSE response");
+    console.log("✓ Got BSE search response");
 
-    const csv = parseBSETableToCSV(postResponse.body);
-
-    if (!csv) {
+    // Check if the search result page has any data
+    if (!submitResponse.body.includes("ContentPlaceHolder1_divCT1")) {
       throw new Error("No bond data found in BSE response");
     }
 
-    console.log("✓ BSE data parsed successfully");
-    return csv;
+    // Step 3: Trigger CSV download using the post-search viewstate
+    const fields2 = extractFormFields(submitResponse.body);
+    if (
+      !fields2.viewstate ||
+      !fields2.viewstateGenerator ||
+      !fields2.eventValidation
+    ) {
+      throw new Error("Failed to extract viewstate from search response");
+    }
+
+    console.log("Downloading BSE CSV...");
+
+    const downloadData = new URLSearchParams({
+      __EVENTTARGET: "ctl00$ContentPlaceHolder1$imgDownload",
+      __EVENTARGUMENT: "",
+      __VIEWSTATE: fields2.viewstate,
+      __VIEWSTATEGENERATOR: fields2.viewstateGenerator,
+      __VIEWSTATEENCRYPTED: "",
+      __EVENTVALIDATION: fields2.eventValidation,
+      ctl00$ContentPlaceHolder1$hidFDate: "",
+      ctl00$ContentPlaceHolder1$txtFromDate: dateStr,
+      ctl00$ContentPlaceHolder1$txtTodate: dateStr,
+      ctl00$ContentPlaceHolder1$hidCurrentDate: "",
+      ctl00$ContentPlaceHolder1$Indices: "rcds",
+    }).toString();
+
+    const downloadOptions = {
+      hostname: "www.bseindia.com",
+      path: "/markets/debt/debt_search.aspx",
+      method: "POST",
+      headers: {
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "accept-language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
+        "content-type": "application/x-www-form-urlencoded",
+        "content-length": Buffer.byteLength(downloadData),
+        cookie: cookies,
+        origin: "https://www.bseindia.com",
+        referer: "https://www.bseindia.com/markets/debt/debt_search.aspx",
+        "user-agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+      },
+    };
+
+    const downloadResponse = await makeRequest(downloadOptions, downloadData);
+
+    if (downloadResponse.statusCode !== 200) {
+      throw new Error(
+        `BSE download POST returned status code: ${downloadResponse.statusCode}`,
+      );
+    }
+
+    // If BSE returned HTML instead of CSV, there's no downloadable data
+    const body = downloadResponse.body.trim();
+    if (
+      body.startsWith("<!") ||
+      body.startsWith("<html") ||
+      body.startsWith("<")
+    ) {
+      throw new Error(
+        "No bond data found in BSE response (HTML returned instead of CSV)",
+      );
+    }
+
+    console.log("✓ BSE CSV downloaded successfully");
+    return downloadResponse.body;
   } catch (error) {
     console.error("Error fetching BSE data:", error.message);
     throw error;
   }
-}
-
-// Parse BSE HTML table to CSV
-function parseBSETableToCSV(html) {
-  const root = parse(html);
-  const table = root.querySelector("#ContentPlaceHolder1_divCT1 table");
-
-  if (!table) {
-    return null;
-  }
-
-  const rows = table.querySelectorAll("tr");
-  const csvLines = [];
-
-  csvLines.push(
-    "Date,Security Code,ISIN No,Issuer Name,Coupon (%),Maturity Date,LTP,Weighted Average Price,Weighted Average Yield,Turnover (Rs Lacs),No. Of Trades",
-  );
-
-  for (const row of rows) {
-    const cells = row.querySelectorAll("td");
-
-    if (cells.length === 0 || row.classList.contains("TTHeader")) {
-      continue;
-    }
-
-    if (cells.length >= 11) {
-      const data = [];
-
-      for (let i = 0; i < 11; i++) {
-        let cellText = cells[i].text.trim();
-        cellText = cellText.replace(/,/g, "");
-        cellText = cellText.replace(/\s+/g, " ");
-
-        if (cellText.includes(",") || cellText.includes('"')) {
-          cellText = `"${cellText.replace(/"/g, '""')}"`;
-        }
-
-        data.push(cellText);
-      }
-
-      csvLines.push(data.join(","));
-    }
-  }
-
-  return csvLines.join("\n");
 }
 
 // Store NSE data in database
@@ -395,34 +434,81 @@ async function storeNSEData(csvData, tradeDate) {
 
 // Store BSE data in database
 async function storeBSEData(csvData, tradeDate) {
-  const records = parseCSV(csvData, "BSE");
+  console.log(csvData);
+  // Parse CSV directly (like migrate-bse.mjs) to avoid issues with parseCSV wrapper
+  let csvStr = csvData;
+  if (csvStr.charCodeAt(0) === 0xfeff) {
+    csvStr = csvStr.slice(1);
+  }
+
+  const records = parseCSVLib(csvStr, {
+    columns: (headers) => headers.map(normalizeHeader),
+    skip_empty_lines: true,
+    relax_quotes: true,
+    relax_column_count: true,
+    trim: true,
+    bom: true,
+  });
+
   if (!records.length) {
     throw new Error("No BSE records to store");
   }
 
-  const dbRecords = records.map((r) => ({
-    trade_date: tradeDate,
-    exchange: "BSE",
+  // Log CSV columns for debugging (first time only)
+  if (records.length > 0 && !storeBSEData._headerLogged) {
+    console.log(`  BSE CSV columns: ${Object.keys(records[0]).join(", ")}`);
+    storeBSEData._headerLogged = true;
+  }
 
-    security_code: r["Scrip Name"] || null,
-    issuer_name: null,
-    coupon_rate: null,
-    maturity_date: null,
-    ltp: r["Close Price"]
-      ? parseFloat(r["Close Price"].replace(/,/g, ""))
-      : null,
-    turnover_rs_lacs: r["Total Trade Turnover (Rs. Lakhs)"]
-      ? parseFloat(r["Total Trade Turnover (Rs. Lakhs)"].replace(/,/g, ""))
-      : null,
-    no_of_trades: r["Total Trade Volume"]
-      ? parseInt(r["Total Trade Volume"])
-      : null,
-    bond_type: null,
-    face_value: null,
-    credit_rating: null,
+  const dbRecords = records.map((r) => {
+    // Handle different CSV column name variations
+    // Try "Scrip Name" first (from migrate-bse.mjs format), fallback to "Security Code"
+    const securityCode =
+      r["Scrip Name"] || r["Security Code"] || r["Scrip Code"] || null;
 
-    raw_data: r,
-  }));
+    // Try "Close Price" first, fallback to "LTP"
+    const closePrice = r["Close Price"] || r["LTP"] || null;
+    const ltp = closePrice
+      ? parseFloat(String(closePrice).replace(/,/g, ""))
+      : null;
+
+    // Try "Total Trade Turnover (Rs. Lakhs)" first, fallback to "Turnover in Lakhs"
+    const turnoverField =
+      r["Total Trade Turnover (Rs. Lakhs)"] ||
+      r["Turnover in Lakhs"] ||
+      r["Turnover (Rs Lacs)"] ||
+      null;
+    const turnoverRsLacs = turnoverField
+      ? parseFloat(String(turnoverField).replace(/,/g, ""))
+      : null;
+
+    // Try "Total Trade Volume" first, fallback to "No.Of Trades" or "No Of Trades"
+    const volumeField =
+      r["Total Trade Volume"] ||
+      r["No.Of Trades"] ||
+      r["No Of Trades"] ||
+      r["No Of Trades"] ||
+      null;
+    const noOfTrades = volumeField
+      ? parseInt(String(volumeField).replace(/,/g, ""), 10)
+      : null;
+
+    return {
+      trade_date: tradeDate,
+      exchange: "BSE",
+      security_code: securityCode,
+      issuer_name: null,
+      coupon_rate: null,
+      maturity_date: null,
+      ltp: ltp,
+      turnover_rs_lacs: turnoverRsLacs,
+      no_of_trades: noOfTrades,
+      bond_type: null,
+      face_value: null,
+      credit_rating: null,
+      raw_data: r,
+    };
+  });
 
   await supabase
     .from("bond_trades")
