@@ -434,7 +434,7 @@ async function storeNSEData(csvData, tradeDate) {
 
 // Store BSE data in database
 async function storeBSEData(csvData, tradeDate) {
-  console.log(csvData);
+  console.log(csvData.slice(0, 500));
   // Parse CSV directly (like migrate-bse.mjs) to avoid issues with parseCSV wrapper
   let csvStr = csvData;
   if (csvStr.charCodeAt(0) === 0xfeff) {
