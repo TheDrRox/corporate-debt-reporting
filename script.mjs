@@ -119,7 +119,7 @@ function getTargetDate() {
 
   // Now ensure we have a working day (Mon-Fri)
   const targetDay = targetDate.getUTCDay();
-  
+
   if (targetDay === 0) {
     // Sunday -> go back to Friday
     targetDate.setDate(targetDate.getDate() - 2);
@@ -396,23 +396,27 @@ async function storeNSEData(csvData, tradeDate) {
 // Store BSE data in database
 async function storeBSEData(csvData, tradeDate) {
   const records = parseCSV(csvData, "BSE");
-  if (!records.length) throw new Error("No BSE records to store");
+  if (!records.length) {
+    throw new Error("No BSE records to store");
+  }
 
   const dbRecords = records.map((r) => ({
     trade_date: tradeDate,
     exchange: "BSE",
 
-    security_code: r["Security Code"] || null,
-    issuer_name: r["Issuer Name"] || null,
-    coupon_rate: r["Coupon (%)"]
-      ? parseFloat(r["Coupon (%)"].replace(/,/g, ""))
+    security_code: r["Scrip Name"] || null,
+    issuer_name: null,
+    coupon_rate: null,
+    maturity_date: null,
+    ltp: r["Close Price"]
+      ? parseFloat(r["Close Price"].replace(/,/g, ""))
       : null,
-    maturity_date: r["Maturity Date"] ? parseBSEDate(r["Maturity Date"]) : null,
-    ltp: r["LTP"] ? parseFloat(r["LTP"].replace(/,/g, "")) : null,
-    turnover_rs_lacs: r["Turnover (Rs Lacs)"]
-      ? parseFloat(r["Turnover (Rs Lacs)"].replace(/,/g, ""))
+    turnover_rs_lacs: r["Total Trade Turnover (Rs. Lakhs)"]
+      ? parseFloat(r["Total Trade Turnover (Rs. Lakhs)"].replace(/,/g, ""))
       : null,
-    no_of_trades: r["No. Of Trades"] ? parseInt(r["No. Of Trades"]) : null,
+    no_of_trades: r["Total Trade Volume"]
+      ? parseInt(r["Total Trade Volume"])
+      : null,
     bond_type: null,
     face_value: null,
     credit_rating: null,
@@ -452,7 +456,7 @@ async function cleanupOldData() {
   }
 
   const deletedCount = data?.length || 0;
-  
+
   // Get breakdown by exchange and date range
   let details = null;
   if (deletedCount > 0 && data) {
@@ -460,18 +464,18 @@ async function cleanupOldData() {
       acc[row.exchange] = (acc[row.exchange] || 0) + 1;
       return acc;
     }, {});
-    
-    const dates = data.map(row => row.trade_date).sort();
+
+    const dates = data.map((row) => row.trade_date).sort();
     const oldestDate = dates[0];
     const newestDate = dates[dates.length - 1];
-    
+
     details = {
       byExchange,
       dateRange: { oldest: oldestDate, newest: newestDate },
       cutoffDate: cutoffDateStr,
     };
   }
-  
+
   console.log(`✓ Cleaned up ${deletedCount} old records`);
   return { count: deletedCount, details };
 }
@@ -554,12 +558,12 @@ async function main() {
   if (results.cleanup.count > 0) {
     const { count, details } = results.cleanup;
     console.log(`✓ Cleanup: Removed ${count} old records`);
-    
+
     telegramMsg += `\n🧹 <b>Cleanup: Deleted ${count} old records</b>\n`;
     if (details) {
       telegramMsg += `📅 Date range: ${details.dateRange.oldest} to ${details.dateRange.newest}\n`;
       telegramMsg += `🗓️ Cutoff: ${details.cutoffDate}\n`;
-      
+
       if (details.byExchange.NSE) {
         telegramMsg += `  • NSE: ${details.byExchange.NSE} records\n`;
       }
