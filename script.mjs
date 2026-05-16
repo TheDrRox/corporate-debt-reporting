@@ -94,12 +94,6 @@ function makeRequest(options, postData = null) {
   });
 }
 
-function parseBSEDate(d) {
-  if (!d) return null;
-  const [dd, mm, yyyy] = d.split("/");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 // Get the appropriate date based on current time
 // Returns the last working day (Mon-Fri)
 function getTargetDate() {
@@ -262,7 +256,7 @@ async function fetchBSEData(targetDate) {
     const apiDate = formatDateBSEApi(targetDate);
     const response = await makeRequest({
       hostname: "api.bseindia.com",
-      path: `/BseIndiaAPI/api/rbcorpbonds1_download/w?frmDate=${apiDate}&toDate=${apiDate}&flag=1`,
+      path: `/BseIndiaAPI/api/rcds_Download/w?frmDate=${apiDate}&toDate=${apiDate}&type=2`,
       method: "GET",
       headers: {
         accept: "*/*",
@@ -429,16 +423,17 @@ async function storeBSEData(csvData, tradeDate) {
       trade_date: tradeDate,
       exchange: "BSE",
       security_code: securityCode,
-      issuer_name: getRecordValue(r, ["Issuer Name", "issuerName", "issuer_name"]),
+      issuer_name: getRecordValue(r, [
+        "Issuer Name",
+        "issuerName",
+        "issuer_name",
+      ]),
       coupon_rate: parseOptionalNumber(
         getRecordValue(r, ["Coupon (%)", "Coupon", "coupon", "coupon_rate"]),
       ),
       maturity_date:
-        getRecordValue(r, [
-          "Maturity Date",
-          "maturityDate",
-          "maturity_date",
-        ]) || null,
+        getRecordValue(r, ["Maturity Date", "maturityDate", "maturity_date"]) ||
+        null,
       ltp: ltp,
       turnover_rs_lacs: turnoverRsLacs,
       no_of_trades: noOfTrades,
