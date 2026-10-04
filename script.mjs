@@ -248,6 +248,25 @@ async function fetchNSEData(targetDate) {
   }
 }
 
+const BSE_API_HEADERS = {
+  accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+  "accept-language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
+  dnt: "1",
+  priority: "u=0, i",
+  referer: "https://www.bseindia.com/",
+  "sec-ch-ua": '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"macOS"',
+  "sec-fetch-dest": "document",
+  "sec-fetch-mode": "navigate",
+  "sec-fetch-site": "same-site",
+  "sec-fetch-user": "?1",
+  "upgrade-insecure-requests": "1",
+  "user-agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+};
+
 // Fetch BSE bond data
 async function fetchBSEData(targetDate) {
   console.log("Fetching BSE bond data...");
@@ -258,18 +277,11 @@ async function fetchBSEData(targetDate) {
       hostname: "api.bseindia.com",
       path: `/BseIndiaAPI/api/rcds_Download/w?frmDate=${apiDate}&toDate=${apiDate}&type=2`,
       method: "GET",
-      headers: {
-        accept: "*/*",
-        "accept-language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7",
-        dnt: "1",
-        priority: "u=0, i",
-        referer: "https://www.bseindia.com/",
-        "user-agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-      },
+      headers: BSE_API_HEADERS,
     });
 
     if (response.statusCode !== 200) {
+      console.error(response.body);
       throw new Error(`BSE API returned status code: ${response.statusCode}`);
     }
 
